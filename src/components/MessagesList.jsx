@@ -1,5 +1,5 @@
 import { useAITeacher } from "@/hooks/useAITeacher";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export const MessagesList = () => {
   const messages = useAITeacher((state) => state.messages);
@@ -8,6 +8,13 @@ export const MessagesList = () => {
   const english = useAITeacher((state) => state.english);
   const furigana = useAITeacher((state) => state.furigana);
   const classroom = useAITeacher((state) => state.classroom);
+  const imageResult = useAITeacher((state) => state.imageResult);
+  const imageError = useAITeacher((state) => state.imageError);
+
+  const defaultImgPos = { x: 1325, y: -54 };
+  const [imgPos, setImgPos] = useState(defaultImgPos);
+  const imgPosRef = useRef(defaultImgPos);
+  const dragState = useRef(null);
 
   const container = useRef();
 
@@ -17,6 +24,18 @@ export const MessagesList = () => {
       behavior: "smooth",
     });
   }, [messages.length]);
+
+  useEffect(() => {
+    imgPosRef.current = imgPos;
+  }, [imgPos]);
+
+  // Reset image position to default whenever a new image is set
+  useEffect(() => {
+    if (imageResult) {
+      setImgPos(defaultImgPos);
+      imgPosRef.current = defaultImgPos;
+    }
+  }, [imageResult]);
 
   const renderEnglish = (englishText) => (
     <>
@@ -41,131 +60,110 @@ export const MessagesList = () => {
     </p>
   );
 
+  const startDrag = (e) => {
+    dragState.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: imgPos.x,
+      origY: imgPos.y,
+    };
+    window.addEventListener("mousemove", onDrag);
+    window.addEventListener("mouseup", endDrag);
+  };
+
+  const onDrag = (e) => {
+    if (!dragState.current) return;
+    const dx = e.clientX - dragState.current.startX;
+    const dy = e.clientY - dragState.current.startY;
+    const nextPos = { x: dragState.current.origX + dx, y: dragState.current.origY + dy };
+    setImgPos(nextPos);
+    console.log("[image overlay] dragging", nextPos);
+  };
+
+  const endDrag = () => {
+    console.log("[image overlay] position", imgPosRef.current);
+    dragState.current = null;
+    window.removeEventListener("mousemove", onDrag);
+    window.removeEventListener("mouseup", endDrag);
+  };
+
+  useEffect(() => () => endDrag(), []);
+
   return (
     <div
-      className={`${
+      className={`relative ${
         classroom === "default"
           ? "w-[1288px] h-[676px]"
           : "w-[2528px] h-[856px]"
       } p-8 overflow-y-auto flex flex-col space-y-8 bg-transparent opacity-80`}
       ref={container}
     >
+      {(imageResult || imageError) && (
+        <div
+          className="fixed z-20 cursor-move select-none"
+          style={{ top: imgPos.y, left: imgPos.x, width: "820px", height: "820px" }}
+          onMouseDown={startDrag}
+        >
+          <div className="w-full h-full rounded-2xl bg-white/10 backdrop-blur border border-white/30 shadow-2xl overflow-hidden flex flex-col">
+            <div className="absolute top-2 left-2 text-sm px-3 py-1.5 rounded-md bg-black/80 text-white font-mono font-semibold shadow-lg">
+              x:{Math.round(imgPos.x)} y:{Math.round(imgPos.y)}
+            </div>
+            <div className="flex-1 bg-slate-900/40 grid place-items-center">
+              {imageResult && imageResult.url ? (
+                <img
+                  src={imageResult.url || imageResult.thumb}
+                  alt={imageResult.title || "related"}
+                  className="w-full h-full object-contain"
+                  loading="lazy"
+                />
+              ) : (
+                <span className="text-white/70 text-sm px-3 text-center">{imageError || "No image"}</span>
+              )}
+            </div>
+            {imageResult?.title && (
+              <div className="p-2 text-xs text-white/80 line-clamp-2 bg-slate-900/60">
+                {imageResult.title}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {messages.length === 0 && (
         <div className="h-full w-full grid place-content-center text-center">
           <h2 className="text-8xl font-bold text-white/90 italic">
-            Wawa Sensei
-            <br />
-            Japanese Language School
-          </h2>
-          <h2 className="text-8xl font-bold font-jp text-red-600/90 italic">
-            ワワ先生日本語学校
+            Welcome to Vidyadost
           </h2>
         </div>
       )}
-      {messages.map((message, i) => (
-        <div key={i}>
-          <div className="flex">
-            <div className="flex-grow">
-              <div className="flex items-center gap-3">
-                <span
-                  className={`text-white/90 text-2xl font-bold uppercase px-3 py-1 rounded-full  ${
-                    message.speech === "formal"
-                      ? "bg-indigo-600"
-                      : "bg-teal-600"
-                  }`}
-                >
-                  {message.speech}
-                </span>
-                {renderEnglish(message.answer.english)}
-              </div>
-
-              {renderJapanese(message.answer.japanese)}
-            </div>
-            {currentMessage === message ? (
-              <button
-                className="text-white/65"
-                onClick={() => stopMessage(message)}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                  className="w-16 h-16"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 9.563C9 9.252 9.252 9 9.563 9h4.874c.311 0 .563.252.563.563v4.874c0 .311-.252.563-.563.563H9.564A.562.562 0 0 1 9 14.437V9.564Z"
-                  />
-                </svg>
-              </button>
-            ) : (
-              <button
-                className="text-white/65"
-                onClick={() => playMessage(message)}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                  className="w-16 h-16"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M15.91 11.672a.375.375 0 0 1 0 .656l-5.603 3.113a.375.375 0 0 1-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112Z"
-                  />
-                </svg>
-              </button>
-            )}
-          </div>
-          <div className="p-5 mt-5  bg-gradient-to-br from-pink-200/20 to-pink-500/20 rounded-xl">
-            <span className="pr-4 italic bg-clip-text text-transparent bg-gradient-to-b from-white/90 to-white/70 text-3xl font-bold uppercase inline-block">
-              Grammar Breakdown
-            </span>
-            {message.answer.grammarBreakdown.map((grammar, i) => (
-              <div key={i} className="mt-3">
-                {message.answer.grammarBreakdown.length > 1 && (
-                  <>
-                    {renderEnglish(grammar.english)}
-                    {renderJapanese(grammar.japanese)}
-                  </>
-                )}
-
-                <div className="mt-3 flex flex-wrap gap-3 items-end">
-                  {grammar.chunks.map((chunk, i) => (
-                    <div key={i} className="p-2 bg-black/30 rounded-md">
-                      <p className="text-white/90 text-4xl font-jp">
-                        {renderJapanese(chunk.japanese)}
-                      </p>
-                      <p className="text-pink-300/90 text-2xl">
-                        {chunk.meaning}
-                      </p>
-                      <p className="text-blue-400/90 text-2xl">
-                        {chunk.grammar}
-                      </p>
+      {(messages.length > 0 || currentMessage) && (() => {
+        const pool = [...messages, currentMessage].filter(Boolean);
+        const latest = pool.reduce((best, m) => {
+          const bestTs = best?.ts ?? best?.id ?? 0;
+          const ts = m?.ts ?? m?.id ?? 0;
+          return ts >= bestTs ? m : best;
+        }, null);
+        if (!latest) return null;
+        return (
+          <div>
+            <div className="flex">
+              <div className="flex-grow">
+                <div className="flex items-center gap-3">
+                  {/* Show text only when TTS/audio is ready */}
+                  {latest.displayReady && latest.answer && typeof latest.answer === 'string' && (
+                    <div className="text-3xl whitespace-pre-line px-2 rounded-sm font-bold bg-clip-text text-transparent bg-gradient-to-br from-blue-300/90 to-white/90">
+                      {latest.answer}
                     </div>
-                  ))}
+                  )}
+                  {/* Show structured answer if present and ready */}
+                  {latest.displayReady && latest.answer && typeof latest.answer === 'object' && latest.answer.english && renderEnglish(latest.answer.english)}
                 </div>
+                {/* Show structured Japanese if present */}
+                {latest.displayReady && latest.answer && typeof latest.answer === 'object' && latest.answer.japanese && renderJapanese(latest.answer.japanese)}
               </div>
-            ))}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })()}
     </div>
   );
 };

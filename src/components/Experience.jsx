@@ -12,6 +12,7 @@ import {
 import { Canvas } from "@react-three/fiber";
 import { Leva, button, useControls } from "leva";
 import { Suspense, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { degToRad } from "three/src/math/MathUtils";
 import { BoardSettings } from "./BoardSettings";
 import { MessagesList } from "./MessagesList";
@@ -42,11 +43,20 @@ const itemPlacement = {
 };
 
 export const Experience = () => {
+  const router = useRouter();
   const teacher = useAITeacher((state) => state.teacher);
   const classroom = useAITeacher((state) => state.classroom);
 
   return (
     <>
+      <div className="fixed top-4 left-4 z-20">
+        <button
+          onClick={() => router.push("/dashboard")}
+          className="px-4 py-2 rounded-full bg-white/15 border border-white/30 text-white shadow-lg backdrop-blur hover:bg-white/25 transition"
+        >
+          ☰ Menu
+        </button>
+      </div>
       <div className="z-10 md:justify-center fixed bottom-4 left-4 right-4 flex gap-3 flex-wrap justify-stretch">
         <TypingBox />
       </div>
