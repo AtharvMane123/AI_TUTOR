@@ -18,6 +18,7 @@ import { BoardSettings } from "./BoardSettings";
 import { MessagesList } from "./MessagesList";
 import { Teacher } from "./Teacher";
 import { TypingBox } from "./TypingBox";
+import { QuizModal } from "./QuizModal";
 
 const itemPlacement = {
   default: {
@@ -46,6 +47,8 @@ export const Experience = () => {
   const router = useRouter();
   const teacher = useAITeacher((state) => state.teacher);
   const classroom = useAITeacher((state) => state.classroom);
+  const showQuiz = useAITeacher((state) => state.showQuiz);
+  const showQuizResult = useAITeacher((state) => state.showQuizResult);
 
   return (
     <>
@@ -60,6 +63,7 @@ export const Experience = () => {
       <div className="z-10 md:justify-center fixed bottom-4 left-4 right-4 flex gap-3 flex-wrap justify-stretch">
         <TypingBox />
       </div>
+      <QuizModal />
       <Leva hidden />
       <Loader />
       <Canvas
@@ -76,8 +80,8 @@ export const Experience = () => {
               {...itemPlacement[classroom].board}
               distanceFactor={1}
             >
-              <MessagesList />
-              <BoardSettings />
+              {!(showQuiz || showQuizResult) && <MessagesList />}
+              {!(showQuiz || showQuizResult) && <BoardSettings />}
             </Html>
             <Environment preset="sunset" />
             <ambientLight intensity={0.8} color="pink" />

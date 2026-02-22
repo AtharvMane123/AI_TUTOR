@@ -61,6 +61,7 @@ export default function DashboardPage() {
   const setProfileStore = useAITeacher((state) => state.setProfile);
   const consumePendingLessonPrompt = useAITeacher((state) => state.consumePendingLessonPrompt);
   const askAI = useAITeacher((state) => state.askAI);
+  const lastQuizScore = useAITeacher((state) => state.lastQuizScore);
 
   useEffect(() => {
     const stored = localStorage.getItem("userProfile");
@@ -173,6 +174,17 @@ export default function DashboardPage() {
               <p><span className="text-white/60">Class:</span> {profile?.standard || "—"}</p>
               <p><span className="text-white/60">Age:</span> {profile?.age || "—"}</p>
               <p><span className="text-white/60">Second language:</span> {profile?.secondLanguage || "—"}</p>
+            </div>
+
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-1">
+              <p className="text-sm text-white/70">Last Quiz</p>
+              {lastQuizScore ? (
+                <p className="text-lg font-semibold text-emerald-200">
+                  {lastQuizScore.score} / {lastQuizScore.total}
+                </p>
+              ) : (
+                <p className="text-white/60 text-sm">No quiz taken yet.</p>
+              )}
             </div>
 
             <div className="rounded-2xl p-4 bg-emerald-500/10 border border-emerald-400/40 shadow flex items-center gap-3">

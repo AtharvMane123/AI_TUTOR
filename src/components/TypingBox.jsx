@@ -7,6 +7,7 @@ export const TypingBox = () => {
   const stopMessage = useAITeacher((state) => state.stopMessage);
   const consumePendingLessonPrompt = useAITeacher((state) => state.consumePendingLessonPrompt);
   const pendingLessonPrompt = useAITeacher((state) => state.pendingLessonPrompt);
+  const startQuiz = useAITeacher((state) => state.startQuiz);
   const [question, setQuestion] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [recordError, setRecordError] = useState("");
@@ -140,7 +141,7 @@ export const TypingBox = () => {
           </span>
         </div>
       ) : (
-        <div className="gap-3 flex">
+        <div className="gap-3 flex flex-wrap">
           <input
             className="focus:outline focus:outline-white/80 flex-grow bg-slate-800/60 p-2 px-4 rounded-full text-white placeholder:text-white/50 shadow-inner shadow-slate-900/60"
             placeholder="Speak or type your question"
@@ -172,6 +173,13 @@ export const TypingBox = () => {
             onClick={ask}
           >
             Ask
+          </button>
+          <button
+            className="bg-emerald-500/80 hover:bg-emerald-400 p-2 px-6 rounded-full text-white"
+            onClick={() => startQuiz()}
+            title="Start quiz from current chat"
+          >
+            Start Quiz
           </button>
         </div>
       )}

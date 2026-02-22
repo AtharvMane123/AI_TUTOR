@@ -41,8 +41,16 @@ export const useAITeacher = create((set, get) => ({
   imageError: null,
   imageShownOnce: false,
   useAltLanguage: false,
+  quiz: null,
+  showQuiz: false,
+  quizError: null,
+  quizScore: 0,
+  quizResult: null,
+  showQuizResult: false,
+  lastQuizScore: null,
   learningStyle: 1, // 1=normal,2=real-world examples,3=with image,4=step-by-step scaffold
   consecutiveMisses: 0,
+  correctStreak: 0,
 
   setLearningStyle: (style) => {
     set(() => ({ learningStyle: style }));
@@ -84,10 +92,18 @@ export const useAITeacher = create((set, get) => ({
       pendingLessonPrompt: prompt,
       learningStyle: 1,
       consecutiveMisses: 0,
+      correctStreak: 0,
       imageResult: null,
       imageError: null,
       imageShownOnce: false,
       useAltLanguage: false,
+      quiz: null,
+      showQuiz: false,
+      quizError: null,
+      quizScore: 0,
+      quizResult: null,
+      showQuizResult: false,
+      lastQuizScore: null,
     }));
     if (fullSession?.key) {
       get().loadHistory(fullSession.key);
@@ -143,19 +159,74 @@ export const useAITeacher = create((set, get) => ({
     // Kill any prior TTS so the new answer is the only thing spoken
     get().stopMessage?.();
 
-    const { profile, activeSession, messages: prevMessages, learningStyle, consecutiveMisses } = get();
-    const isMiss = /\b(don't know|dont know|idk|not sure|no idea)\b/i.test(question);
-    const newMisses = isMiss ? consecutiveMisses + 1 : 0;
-    let nextLearningStyle = learningStyle;
-    const altLanguage = newMisses >= 2 && profile?.secondLanguage ? profile.secondLanguage : null;
+    const {
+      profile,
+      activeSession,
+      messages: prevMessages,
+      learningStyle,
+      consecutiveMisses,
+      correctStreak,
+      useAltLanguage,
+    } = get();
 
-    // After two misses, jump directly to image-assisted mode (style 3) to aid understanding
-    if (newMisses >= 2) {
+    // Detect signals
+    const isMiss = /\b(don't know|dont know|idk|not sure|no idea|confused|lost|repeat|say again|again please|help me|can't understand|cannot understand|samajh|samajh nahi|samajh nahin|samjha)\b/i.test(
+      question || ""
+    );
+    const isComprehension = /\b(got it|understood|understand|i get it|samajh gaya|samajh gya|samjha|ho gaya|done|correct|sahi hai|theek hai|ok understood)\b/i.test(
+      question || ""
+    );
+    const wantsLanguageSwitch = /\b(change language|switch language|native language|apni bhasha|apni language|apni zubaan|hindi|telugu|marathi|bangla|urdu|tamizh|tamil|kannada|gujarati|punjabi|odia)\b/i.test(
+      question || ""
+    );
+    const isStartQuiz = /\b(start quiz|quiz please|give me a quiz)\b/i.test(question || "");
+
+    const newMisses = isMiss ? consecutiveMisses + 1 : 0;
+    const nextCorrectStreak = isComprehension
+      ? correctStreak + 1
+      : isMiss
+      ? 0
+      : correctStreak; // keep streak for neutral/answering turns
+    let nextLearningStyle = learningStyle;
+    let nextUseAltLanguage = useAltLanguage;
+
+    const imageAlreadyShown = get().imageShownOnce;
+
+    // Adaptive switch: after 2 misses OR if an image was already shown and the student is still confused, force alt language
+    if (newMisses >= 2 || (imageAlreadyShown && isMiss)) {
       nextLearningStyle = 3;
-      set(() => ({ learningStyle: nextLearningStyle, consecutiveMisses: 0 }));
+      nextUseAltLanguage = true;
+      set(() => ({
+        learningStyle: nextLearningStyle,
+        consecutiveMisses: 0,
+        useAltLanguage: nextUseAltLanguage,
+        correctStreak: nextCorrectStreak,
+      }));
     } else {
-      set(() => ({ consecutiveMisses: newMisses }));
+      set(() => ({
+        consecutiveMisses: newMisses,
+        useAltLanguage: nextUseAltLanguage,
+        correctStreak: nextCorrectStreak,
+      }));
     }
+
+    // If user explicitly asks to switch language, force alt language immediately
+    if (wantsLanguageSwitch && !nextUseAltLanguage) {
+      nextUseAltLanguage = true;
+      set(() => ({ useAltLanguage: true }));
+    }
+
+    // Trigger quiz after two correct/comprehension confirmations
+    if ((nextCorrectStreak >= 2 || isStartQuiz) && !get().showQuiz) {
+      set(() => ({ correctStreak: 0 }));
+      get().startQuiz?.();
+    }
+
+    // Use the user's provided second language; fall back to Hindi if missing
+    const altLanguage = nextUseAltLanguage
+      ? (profile?.secondLanguage?.trim() || "Hindi")
+      : null;
+
     const messageId = Date.now();
     const baseMessage = {
       question,
@@ -271,23 +342,18 @@ export const useAITeacher = create((set, get) => ({
       const { cleaned, keyword } = stripImageKeyword(accumulated);
       if (keyword && !imageKeyword) imageKeyword = keyword;
 
-      // Optionally fetch image once and mention it
+      // Optionally fetch image once and mention it (no URL in the text)
       let finalText = cleaned;
-      let imageUrl = null;
       if (nextLearningStyle === 3 && !get().imageShownOnce) {
         const query = imageKeyword || activeSession?.topic || question;
         try {
-          const img = await fetchOneImage(query);
-          imageUrl = img?.url || null;
+          await fetchOneImage(query);
         } catch (e) {
           console.error("inline image fetch failed", e);
         }
         const label = imageKeyword || activeSession?.topic || "the concept";
-        const imageLine = imageUrl ? `Image URL: ${imageUrl}` : "";
-        const notice = imageUrl
-          ? `Can you see the image on the right? It shows ${label}.`
-          : `Let me explain ${label} clearly.`;
-        finalText = [cleaned, notice, imageLine].filter(Boolean).join("\n\n");
+        const notice = `Can you see the image on the right? It shows ${label}.`;
+        finalText = [cleaned, notice].filter(Boolean).join("\n\n");
       }
 
       // Send the full cleaned text to TTS in one batch to keep order
@@ -413,6 +479,138 @@ export const useAITeacher = create((set, get) => ({
     } catch (err) {
       console.error("fetchImage error", err);
       set(() => ({ imageResult: null, imageError: err.message || "Image search failed" }));
+    }
+  },
+
+  startQuiz: async () => {
+    const { profile, activeSession, messages } = get();
+    console.log("[quiz] startQuiz invoked", {
+      hasProfile: Boolean(profile),
+      hasSession: Boolean(activeSession),
+    });
+    if (!profile && !activeSession) return;
+
+    // Build full_content from current session messages
+    const full_content = (messages || [])
+      .filter((m) => m.question && m.answer)
+      .sort((a, b) => (a.ts || 0) - (b.ts || 0))
+      .map((m) => ({ user: m.question, assistant: m.answer, ts: m.ts || m.id || Date.now() }));
+
+    // Set loading state for quiz modal
+    set(() => ({
+      showQuiz: true,
+      quizError: null,
+      quiz: { loading: true, questions: [], current: 0, answers: [] },
+      quizScore: 0,
+      quizResult: null,
+      showQuizResult: false,
+    }));
+
+    // Default Flask quiz endpoint on port 5000 (LAN IP) if env is not set
+    const quizApiUrl = process.env.NEXT_PUBLIC_QUIZ_API_URL || "http://192.168.137.233:5000/generate_final";
+    if (!full_content.length) {
+      console.warn("[quiz] No conversation history to send to quiz API");
+    }
+
+    console.log("[quiz] POST", quizApiUrl, { full_content });
+
+    try {
+      const res = await fetch(quizApiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        mode: "cors",
+        body: JSON.stringify({ full_content }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("[quiz] non-200", res.status, res.statusText, text);
+        throw new Error(text || `Quiz generation failed (${res.status})`);
+      }
+
+      const textBody = await res.text();
+      let data;
+      try {
+        data = JSON.parse(textBody);
+      } catch (e) {
+        throw new Error(`Invalid JSON from quiz API: ${textBody}`);
+      }
+      const rawQuestions = Array.isArray(data) ? data : data?.questions || [];
+      const questions = rawQuestions
+        .slice(0, 4)
+        .map((q) => {
+          const opts = Array.isArray(q.options) ? q.options : [];
+          const answerIndex = Math.max(0, opts.findIndex((o) => o === q.correct_answer));
+          return {
+            question: q.question || "",
+            options: opts,
+            answerIndex: answerIndex >= 0 ? answerIndex : 0,
+          };
+        })
+        .filter((q) => q.question && (q.options || []).length === 4);
+
+      if (!questions.length) throw new Error("No quiz questions returned");
+
+      set(() => ({
+        quiz: { questions, current: 0, answers: [], loading: false },
+        showQuiz: true,
+        quizError: null,
+        quizScore: 0,
+        quizResult: null,
+        showQuizResult: false,
+      }));
+    } catch (err) {
+      console.error("startQuiz error", err);
+      // Fallback: keep modal open and show simple local quiz so the user still sees a quiz
+      const fallbackQuestions = ["Question 1", "Question 2", "Question 3", "Question 4"].map((q, i) => ({
+        question: `${q}: ${activeSession?.topic || "your topic"}?`,
+        options: ["Option A", "Option B", "Option C", "Option D"],
+        answerIndex: 0,
+      }));
+      set(() => ({
+        quizError: err.message || "Quiz generation failed",
+        quiz: { questions: fallbackQuestions, current: 0, answers: [], loading: false },
+        showQuiz: true,
+      }));
+    }
+  },
+
+  answerQuizOption: (choiceIndex, isCorrect) => {
+    const { quiz, showQuiz, quizScore } = get();
+    if (!quiz || !showQuiz || quiz.loading) return;
+
+    const answers = [...(quiz.answers || [])];
+    answers[quiz.current] = choiceIndex;
+    const nextIndex = quiz.current + 1;
+    const done = nextIndex >= (quiz.questions?.length || 0);
+    const nextScore = quizScore + (isCorrect ? 1 : 0);
+
+    set(() => ({
+      quiz: done
+        ? quiz
+        : {
+            ...quiz,
+            current: nextIndex,
+            answers,
+          },
+      quizScore: nextScore,
+    }));
+
+    if (done) {
+      set(() => ({
+        showQuiz: false,
+        quiz: null,
+        correctStreak: 0,
+        quizResult: { score: nextScore, total: quiz.questions?.length || 4 },
+        showQuizResult: true,
+        lastQuizScore: { score: nextScore, total: quiz.questions?.length || 4, ts: Date.now() },
+      }));
+      // End session after quiz completion
+      try {
+        get().setActiveSession?.(null);
+      } catch (e) {
+        console.error("end session after quiz error", e);
+      }
     }
   },
 
