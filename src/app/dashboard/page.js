@@ -53,12 +53,14 @@ const subjects = [
 
 export default function DashboardPage() {
   const [profile, setProfile] = useState(null);
+  const [activeDates, setActiveDates] = useState([]);
   const [expandedSubject, setExpandedSubject] = useState(null);
   const [expandedUnit, setExpandedUnit] = useState(null);
   const [selectedTopic, setSelectedTopic] = useState(null);
   const router = useRouter();
   const setActiveSession = useAITeacher((state) => state.setActiveSession);
   const setProfileStore = useAITeacher((state) => state.setProfile);
+    const loadLastQuizScore = useAITeacher((state) => state.loadLastQuizScore);
   const consumePendingLessonPrompt = useAITeacher((state) => state.consumePendingLessonPrompt);
   const askAI = useAITeacher((state) => state.askAI);
   const lastQuizScore = useAITeacher((state) => state.lastQuizScore);
@@ -69,6 +71,19 @@ export default function DashboardPage() {
       setProfile(JSON.parse(stored));
       setProfileStore(JSON.parse(stored));
     }
+    loadLastQuizScore();
+
+    // Seed last 10 days (including today) as active streak dates
+    const makeLastNDates = (n) => {
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        out.push(d.toISOString().split("T")[0]);
+      }
+      return out;
+    };
+    setActiveDates(makeLastNDates(10));
   }, []);
 
   const handleLearn = (topic, subjectName, unitName, gradeValue) => {
@@ -87,6 +102,24 @@ export default function DashboardPage() {
     // Navigate back to tutor with session active (client-side to preserve store)
     router.push("/");
   };
+
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const monthName = today.toLocaleString("default", { month: "long" });
+
+  const calendarDays = [];
+  for (let i = 0; i < firstDay; i++) {
+    calendarDays.push({ key: `empty-${i}`, label: "", active: false, empty: true });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateObj = new Date(year, month, d);
+    const iso = dateObj.toISOString().split("T")[0];
+    const isActive = activeDates.includes(iso);
+    calendarDays.push({ key: d, label: d, active: isActive, empty: false });
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-800 text-white">
@@ -187,13 +220,42 @@ export default function DashboardPage() {
               )}
             </div>
 
-            <div className="rounded-2xl p-4 bg-emerald-500/10 border border-emerald-400/40 shadow flex items-center gap-3">
-              <div className="h-12 w-12 rounded-full bg-emerald-500/30 border border-emerald-400/50 grid place-items-center text-xl">
-                🔥
+            <div className="rounded-2xl p-4 bg-emerald-500/10 border border-emerald-400/40 shadow space-y-3">
+              <div className="flex items-center gap-3">
+                <div className="h-12 w-12 rounded-full bg-emerald-500/30 border border-emerald-400/50 grid place-items-center text-xl">
+                  🔥
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{activeDates.length}</p>
+                  <p className="text-sm text-white/70">day streak</p>
+                </div>
               </div>
-              <div>
-                <p className="text-2xl font-bold">10</p>
-                <p className="text-sm text-white/70">day streak</p>
+              <div className="border border-emerald-400/30 rounded-xl p-3 bg-white/5">
+                <div className="flex items-center justify-between mb-2 text-sm text-white/70">
+                  <span>{monthName} {year}</span>
+                  <span className="text-emerald-300">Last 10 days active</span>
+                </div>
+                <div className="grid grid-cols-7 gap-2 text-xs text-white/60 mb-2">
+                  {"SMTWTFS".split("").map((d) => (
+                    <span key={d} className="text-center">{d}</span>
+                  ))}
+                </div>
+                <div className="grid grid-cols-7 gap-2 text-sm">
+                  {calendarDays.map((day) => (
+                    <div
+                      key={day.key}
+                      className={`h-9 rounded-md border border-white/10 flex items-center justify-center ${
+                        day.empty
+                          ? "bg-transparent"
+                          : day.active
+                          ? "bg-emerald-400 text-emerald-950 font-semibold"
+                          : "bg-white/5 text-white/80"
+                      }`}
+                    >
+                      {day.label}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 

@@ -48,6 +48,8 @@ export const useAITeacher = create((set, get) => ({
   quizResult: null,
   showQuizResult: false,
   lastQuizScore: null,
+  mastery: {}, // topic -> mastery score (0..1)
+  masteryHistory: {}, // topic -> [scores over time]
   learningStyle: 1, // 1=normal,2=real-world examples,3=with image,4=step-by-step scaffold
   consecutiveMisses: 0,
   correctStreak: 0,
@@ -63,6 +65,19 @@ export const useAITeacher = create((set, get) => ({
     }
   },
 
+  loadLastQuizScore: () => {
+    if (typeof window === "undefined") return;
+    const stored = localStorage.getItem("lastQuizScore");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        set(() => ({ lastQuizScore: parsed }));
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  },
+
   loadProfile: () => {
     if (typeof window === "undefined") return;
     const stored = localStorage.getItem("userProfile");
@@ -74,6 +89,22 @@ export const useAITeacher = create((set, get) => ({
     }
   },
 
+
+  loadMastery: () => {
+    if (typeof window === "undefined") return;
+    const stored = localStorage.getItem("masteryState");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        set(() => ({
+          mastery: parsed.mastery || {},
+          masteryHistory: parsed.masteryHistory || {},
+        }));
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  },
   setActiveSession: (session) => {
     // Stop any ongoing TTS when switching sessions so we don't read old answers
     get().stopMessage?.();
@@ -487,14 +518,28 @@ export const useAITeacher = create((set, get) => ({
     console.log("[quiz] startQuiz invoked", {
       hasProfile: Boolean(profile),
       hasSession: Boolean(activeSession),
+      messageCount: (messages || []).length,
     });
-    if (!profile && !activeSession) return;
 
     // Build full_content from current session messages
     const full_content = (messages || [])
       .filter((m) => m.question && m.answer)
       .sort((a, b) => (a.ts || 0) - (b.ts || 0))
       .map((m) => ({ user: m.question, assistant: m.answer, ts: m.ts || m.id || Date.now() }));
+
+    // If we have no usable history, surface an error early
+    if (!full_content.length) {
+      set(() => ({
+        showQuiz: true,
+        quizError: "No conversation history to build a quiz.",
+        quiz: { loading: false, questions: [], current: 0, answers: [] },
+        quizScore: 0,
+        quizResult: null,
+        showQuizResult: false,
+      }));
+      console.warn("[quiz] No conversation history to send to quiz API");
+      return;
+    }
 
     // Set loading state for quiz modal
     set(() => ({
@@ -507,11 +552,8 @@ export const useAITeacher = create((set, get) => ({
     }));
 
     // Default Flask quiz endpoint on port 5000 (LAN IP) if env is not set
-    const quizApiUrl = process.env.NEXT_PUBLIC_QUIZ_API_URL || "http://192.168.137.233:5000/generate_final";
-    if (!full_content.length) {
-      console.warn("[quiz] No conversation history to send to quiz API");
-    }
-
+    // Use internal proxy route to avoid CORS/mixed-content issues
+    const quizApiUrl = "/api/quiz";
     console.log("[quiz] POST", quizApiUrl, { full_content });
 
     try {
@@ -539,12 +581,15 @@ export const useAITeacher = create((set, get) => ({
       const questions = rawQuestions
         .slice(0, 4)
         .map((q) => {
-          const opts = Array.isArray(q.options) ? q.options : [];
-          const answerIndex = Math.max(0, opts.findIndex((o) => o === q.correct_answer));
+          const opts = Array.isArray(q.options) ? q.options.slice(0, 4) : [];
+          let answerIndex = Number.isInteger(q.answerIndex) ? q.answerIndex : opts.findIndex((o) => o === q.correct_answer);
+          if (answerIndex < 0 || answerIndex >= opts.length) answerIndex = 0;
+          const correctAnswerText = (q.correct_answer || opts[answerIndex] || "").toString();
           return {
             question: q.question || "",
             options: opts,
-            answerIndex: answerIndex >= 0 ? answerIndex : 0,
+            answerIndex,
+            correctAnswerText,
           };
         })
         .filter((q) => q.question && (q.options || []).length === 4);
@@ -575,15 +620,34 @@ export const useAITeacher = create((set, get) => ({
     }
   },
 
-  answerQuizOption: (choiceIndex, isCorrect) => {
-    const { quiz, showQuiz, quizScore } = get();
+  answerQuizOption: (choiceIndex) => {
+    const { quiz, showQuiz, quizScore, mastery, masteryHistory } = get();
     if (!quiz || !showQuiz || quiz.loading) return;
 
+    const currentQuestion = quiz.questions?.[quiz.current];
     const answers = [...(quiz.answers || [])];
     answers[quiz.current] = choiceIndex;
+
+    const choiceText = currentQuestion?.options?.[choiceIndex]?.toString().trim().toLowerCase() || "";
+    const correctText = currentQuestion?.correctAnswerText?.toString().trim().toLowerCase() || "";
+    const isCorrectByText = correctText && choiceText === correctText;
+    const isCorrectByIndex = Number(choiceIndex) === Number(currentQuestion?.answerIndex || 0);
+    const isCorrect = isCorrectByText || isCorrectByIndex;
+
     const nextIndex = quiz.current + 1;
     const done = nextIndex >= (quiz.questions?.length || 0);
     const nextScore = quizScore + (isCorrect ? 1 : 0);
+
+    // Update BKT-like mastery for current topic
+    const topicKey = get().activeSession?.topic || "General";
+    const prevMastery = typeof mastery?.[topicKey] === "number" ? mastery[topicKey] : 0.5;
+    const delta = isCorrect ? 0.03 : -0.05;
+    const updatedMastery = Math.max(0, Math.min(1, prevMastery + delta));
+    const prevHist = masteryHistory?.[topicKey] || [];
+    const newHist = [...prevHist, updatedMastery].slice(-20);
+
+    const updatedMasteryMap = { ...mastery, [topicKey]: updatedMastery };
+    const updatedHistoryMap = { ...masteryHistory, [topicKey]: newHist };
 
     set(() => ({
       quiz: done
@@ -594,7 +658,20 @@ export const useAITeacher = create((set, get) => ({
             answers,
           },
       quizScore: nextScore,
+      mastery: updatedMasteryMap,
+      masteryHistory: updatedHistoryMap,
     }));
+
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem(
+          "masteryState",
+          JSON.stringify({ mastery: updatedMasteryMap, masteryHistory: updatedHistoryMap })
+        );
+      } catch (e) {
+        /* ignore */
+      }
+    }
 
     if (done) {
       set(() => ({
@@ -605,6 +682,16 @@ export const useAITeacher = create((set, get) => ({
         showQuizResult: true,
         lastQuizScore: { score: nextScore, total: quiz.questions?.length || 4, ts: Date.now() },
       }));
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem(
+            "lastQuizScore",
+            JSON.stringify({ score: nextScore, total: quiz.questions?.length || 4, ts: Date.now() })
+          );
+        } catch (e) {
+          /* ignore */
+        }
+      }
       // End session after quiz completion
       try {
         get().setActiveSession?.(null);
@@ -612,6 +699,8 @@ export const useAITeacher = create((set, get) => ({
         console.error("end session after quiz error", e);
       }
     }
+
+    return isCorrect;
   },
 
   _playNextFromQueue: () => {

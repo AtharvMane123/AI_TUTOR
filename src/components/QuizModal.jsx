@@ -39,10 +39,14 @@ export const QuizModal = () => {
     if (locked || !quiz || quiz.loading || !currentQuestion) return;
     setLocked(true);
     setSelectedIdx(idx);
-    const correct = currentQuestion.answerIndex === idx;
+
+    const choiceText = (currentQuestion.options?.[idx] || "").toString().trim().toLowerCase();
+    const correctText = (currentQuestion.correctAnswerText || "").toString().trim().toLowerCase();
+    const correct = (correctText && choiceText === correctText) || idx === currentQuestion.answerIndex;
     setIsCorrect(correct);
+
     setTimeout(() => {
-      answerQuizOption(idx, correct);
+      answerQuizOption(idx);
       setSelectedIdx(null);
       setIsCorrect(null);
       setLocked(false);
